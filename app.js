@@ -62,41 +62,76 @@
       .replace(/"/g, "&quot;");
   }
 
-  async function fetchJson(url, { relay = "fallback" } = {}) {
-    const tryDirect = async () => {
-      const res = await fetch(url, { headers: UA, cache: "no-store", mode: "cors" });
-      if (!res.ok) {
-        const err = new Error(`HTTP ${res.status}`);
-        err.status = res.status;
-        throw err;
-      }
-      return res.json();
-    };
-    const tryRelay = async () => {
-      const res = await fetch(`${RELAY}?url=${encodeURIComponent(url)}`, {
-        headers: UA,
-        cache: "no-store",
-      });
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`;
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function fetchOnce(url, useRelay) {
+    const target = useRelay ? `${RELAY}?url=${encodeURIComponent(url)}` : url;
+    const res = await fetch(target, { headers: UA, cache: "no-store", mode: "cors" });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      if (useRelay) {
         try {
           const body = await res.json();
           if (body && body.error) detail += ` (${body.error})`;
         } catch {}
-        const err = new Error(detail);
-        err.status = res.status;
+      }
+      const err = new Error(detail);
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  }
+
+  async function fetchWithRetry(url, useRelay) {
+    let last;
+    for (let i = 0; i < 4; i++) {
+      try {
+        return await fetchOnce(url, useRelay);
+      } catch (err) {
+        last = err;
+        const status = err.status || 0;
+        if (status === 429 || status === 503 || status === 502) {
+          await sleep(400 * (i + 1) * (i + 1));
+          continue;
+        }
         throw err;
       }
-      return res.json();
-    };
-
-    if (relay === "never") return tryDirect();
-    if (relay === "always") return tryRelay();
-    try {
-      return await tryDirect();
-    } catch (err) {
-      return tryRelay();
     }
+    throw last;
+  }
+
+  async function fetchJson(url, { relay = "fallback" } = {}) {
+    if (relay === "never") return fetchWithRetry(url, false);
+    if (relay === "always") return fetchWithRetry(url, true);
+    try {
+      return await fetchWithRetry(url, false);
+    } catch (err) {
+      const status = err.status || 0;
+      if (status === 451 || status === 403) {
+        // Region blocks often affect the relay too; still try, then surface the original error if it also fails.
+      }
+      try {
+        return await fetchWithRetry(url, true);
+      } catch (relayErr) {
+        throw err;
+      }
+    }
+  }
+
+  async function mapLimit(items, limit, fn) {
+    const out = new Array(items.length);
+    let next = 0;
+    async function worker() {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i], i);
+      }
+    }
+    const n = Math.min(limit, items.length) || 0;
+    await Promise.all(Array.from({ length: n }, worker));
+    return out;
   }
 
   function num(v) {
@@ -1132,6 +1167,50 @@
     </tr>`;
   }
 
+  function marketStrike(m) {
+    if (m.floor_strike != null && m.cap_strike != null) {
+      return (num(m.floor_strike) + num(m.cap_strike)) / 2;
+    }
+    if (m.floor_strike != null) return num(m.floor_strike);
+    if (m.cap_strike != null) return num(m.cap_strike);
+    return null;
+  }
+
+  function relevantMarkets(markets, spot) {
+    const rows = (markets || []).map((m) => {
+      const yes = yesPrice(m);
+      const strike = marketStrike(m);
+      const dist = spot != null && strike != null ? Math.abs(strike - spot) / spot : Number.POSITIVE_INFINITY;
+      const interesting = yes != null && yes > 0.03 && yes < 0.97;
+      return { m, yes, strike, dist, interesting };
+    });
+    let pick = rows.filter((r) => r.interesting || r.dist <= 0.1);
+    if (pick.length < 8) {
+      pick = rows.slice().sort((a, b) => a.dist - b.dist).slice(0, 12);
+    } else {
+      pick.sort((a, b) => a.dist - b.dist);
+      pick = pick.slice(0, 16);
+    }
+    pick.sort((a, b) => (a.strike ?? 0) - (b.strike ?? 0));
+    return { shown: pick.map((r) => r.m), total: rows.length };
+  }
+
+  async function fetchAllMarkets(eventTicker) {
+    const all = [];
+    let cursor = "";
+    for (let i = 0; i < 8; i++) {
+      const u =
+        "https://api.elections.kalshi.com/trade-api/v2/markets?limit=200&status=open&event_ticker=" +
+        encodeURIComponent(eventTicker) +
+        (cursor ? "&cursor=" + encodeURIComponent(cursor) : "");
+      const d = await fetchJson(u, { relay: "always" });
+      all.push(...(d.markets || []));
+      if (!d.cursor) break;
+      cursor = d.cursor;
+    }
+    return all;
+  }
+
   function pickEvent(events) {
     const list = (events || []).slice();
     list.sort((a, b) => Date.parse(a.strike_date || a.close_time || 0) - Date.parse(b.strike_date || b.close_time || 0));
@@ -1161,21 +1240,26 @@
       const extra = [];
       if (rangeEv) {
         extra.push(
-          fetchJson(
-            `https://api.elections.kalshi.com/trade-api/v2/markets?limit=50&status=open&event_ticker=${encodeURIComponent(rangeEv.event_ticker)}`,
-            { relay: "always" }
-          ).then((d) => ({ type: "range", event: rangeEv, markets: d.markets || [] }))
+          fetchAllMarkets(rangeEv.event_ticker).then((markets) => ({
+            type: "range",
+            event: rangeEv,
+            markets,
+          }))
         );
       }
       if (dailyEv) {
         extra.push(
-          fetchJson(
-            `https://api.elections.kalshi.com/trade-api/v2/markets?limit=50&status=open&event_ticker=${encodeURIComponent(dailyEv.event_ticker)}`,
-            { relay: "always" }
-          ).then((d) => ({ type: "daily", event: dailyEv, markets: d.markets || [] }))
+          fetchAllMarkets(dailyEv.event_ticker).then((markets) => ({
+            type: "daily",
+            event: dailyEv,
+            markets,
+          }))
         );
       }
       const blocks = await Promise.all(extra);
+      const spotGuess = Object.values(state.exchanges)
+        .map((s) => s.price)
+        .find((p) => Number.isFinite(p));
 
       const parts = [];
       if (m15) {
@@ -1196,11 +1280,12 @@
       }
 
       const section = (title, ev, markets) => {
-        const rows = (markets || [])
-          .slice()
-          .sort((a, b) => (num(a.floor_strike) ?? num(a.cap_strike) ?? 0) - (num(b.floor_strike) ?? num(b.cap_strike) ?? 0))
-          .map(marketRow)
-          .join("");
+        const picked = relevantMarkets(markets, spotGuess);
+        const rows = picked.shown.map(marketRow).join("");
+        const note =
+          picked.total > picked.shown.length
+            ? `<p class="section-note" style="margin:10px 0 0">Showing ${picked.shown.length} of ${picked.total} open contracts, the ones nearest the current Bitcoin price.</p>`
+            : "";
         return `<article class="card">
           <div class="card-head">
             <div>
@@ -1208,6 +1293,7 @@
               <div class="pair">${escapeHtml((ev && ev.title) || "")}</div>
             </div>
           </div>
+          ${note}
           <div style="overflow:auto;margin-top:10px">
             <table class="market-table">
               <thead><tr><th>Contract</th><th>Yes</th><th>No</th><th>Closes</th></tr></thead>
@@ -1303,7 +1389,7 @@
   }
 
   async function refreshCandles() {
-    await Promise.all(venues.map((v) => loadVenueCandles(v)));
+    await mapLimit(venues, 6, (v) => loadVenueCandles(v));
     renderExchanges();
     renderAverage();
   }
