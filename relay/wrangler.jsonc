@@ -1,0 +1,9 @@
+{
+  "name": "the-charts-relay",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-20",
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true }
+  }
+}

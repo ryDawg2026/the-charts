@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="The Charts: live Bitcoin prices and 15-minute, hourly, daily, and weekly reads from public exchange APIs.">
+  <title>The Charts — Live Bitcoin Market Reads</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <p class="eyebrow">Live Bitcoin market reads</p>
+      <h1>The Charts</h1>
+      <p class="lede">Public prices and candles from exchanges and data sites, refreshed automatically. This page is read-only. It does not place trades or use a trading account.</p>
+    </header>
+
+    <section id="average" class="average-panel" aria-live="polite">
+      <div class="kicker">
+        <span>Live average</span>
+        <span id="avg-updated">Waiting for the first reads…</span>
+      </div>
+      <div class="avg-price" id="avg-price">—</div>
+      <div class="avg-meta" id="avg-meta">Averaging healthy USD and USDT spot sources. Failed, stale, or outlier reads are left out.</div>
+      <div class="avg-changes">
+        <div class="change-chip"><span class="lbl">15-minute</span><div class="val" id="avg-15m">—</div></div>
+        <div class="change-chip"><span class="lbl">Hourly</span><div class="val" id="avg-1h">—</div></div>
+        <div class="change-chip"><span class="lbl">Daily</span><div class="val" id="avg-1d">—</div></div>
+        <div class="change-chip"><span class="lbl">Weekly</span><div class="val" id="avg-1w">—</div></div>
+      </div>
+      <div class="kalshi-odds" id="kalshi-odds">Kalshi 15-minute up odds will appear here once that market loads. Kalshi yes/no prices are not part of the dollar average.</div>
+    </section>
+
+    <section>
+      <h2>Exchanges</h2>
+      <p class="section-note">Each card shows a live price plus 15-minute, hourly, daily, and weekly candle reads. A weekly read marked “built from daily” was aggregated from daily candles because that venue has no native weekly interval.</p>
+      <div id="exchange-grid" class="grid"></div>
+    </section>
+
+    <section>
+      <h2>Kalshi Bitcoin markets</h2>
+      <p class="section-note">These are public yes/no contract prices, not a Bitcoin dollar price, so they stay out of the average above. The 15-minute market is an up/down contract. The range and above/below markets are shown for the soonest open event in each series.</p>
+      <div id="kalshi" class="kalshi-wrap"></div>
+    </section>
+
+    <section>
+      <h2>Price only</h2>
+      <p class="section-note">These sources publish a live Bitcoin price but do not offer a public 15-minute, hourly, and daily candle API that we could verify. They can still join the dollar average when they pass the quality check.</p>
+      <div id="price-only" class="price-grid"></div>
+    </section>
+
+    <section>
+      <h2>Chart embeds</h2>
+      <p class="section-note">A free TradingView widget, embedded as provided. This is their chart, not a candle feed we calculate.</p>
+      <div class="embed-frame">
+        <div class="tradingview-widget-container" style="height:460px">
+          <div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+          {
+            "allow_symbol_change": true,
+            "calendar": false,
+            "details": false,
+            "hide_side_toolbar": true,
+            "hide_top_toolbar": false,
+            "hide_legend": false,
+            "hide_volume": false,
+            "hotlist": false,
+            "interval": "15",
+            "locale": "en",
+            "save_image": false,
+            "style": "1",
+            "symbol": "COINBASE:BTCUSD",
+            "theme": "dark",
+            "timezone": "America/Los_Angeles",
+            "backgroundColor": "#12110e",
+            "gridColor": "rgba(242, 239, 232, 0.06)",
+            "watchlist": [],
+            "withdateranges": true,
+            "autosize": true,
+            "support_host": "https://www.tradingview.com"
+          }
+          </script>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p>The Charts is a public, read-only data page. Times are shown in Pacific Time. Numbers come from the listed APIs; if a source fails, that card shows the error instead of a made-up figure.</p>
+    </footer>
+  </div>
+</body>
+</html>
